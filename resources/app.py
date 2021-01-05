@@ -16,9 +16,9 @@ st.set_option('deprecation.showfileUploaderEncoding', False)
 @st.cache(suppress_st_warning=True, persist=True, allow_output_mutation=True)
 def load_data(path_to_file):
     try:
-        data = pd.read_excel(path_to_file)
+        data = pd.read_excel(path_to_file, sheet_name=0)
     except:
-        data = pd.read_csv(path_to_file)
+        data = pd.read_csv(path_to_file, low_memory=False)
     return data
 
 #PAGES --------------------------------------------------------------------------------------------------------------------
