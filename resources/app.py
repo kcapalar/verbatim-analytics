@@ -34,7 +34,7 @@ def load_homepage():
                 data = load_data(path_to_file)
                 return data
     except:
-        st.warning("Data should contain 1 or more rows")
+        st.warning("Please select your file for text analysis")
 
 #MAIN -----------------------------------------------------------------------------------------------
 def navigate_pages():
@@ -62,7 +62,7 @@ def navigate_pages():
         elif page == tabs[3]:
             FAQs.write_faq()
     except:
-        st.warning("Error - Click refresh button or select option again")
+        st.warning("Confirm your selection using the by clicking the button to continue.")
 
 
 navigate_pages()
