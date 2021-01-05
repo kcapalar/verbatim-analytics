@@ -13,18 +13,24 @@ import spacy
 from spacy.matcher import PhraseMatcher
 import SessionState
 import topwords_sent
+from PIL import Image
+import plotly.graph_objects as go
+import seaborn as sns
+from matplotlib import pyplot as plt
+#Settings
+alt.renderers.set_embed_options(padding={"left": 0, "right": 0, "bottom": 0, "top": 0})
 
 @st.cache(suppress_st_warning=True, persist=True, show_spinner=False, allow_output_mutation=True)
-def read_file(filename_with_ext: str, sheet_name=0, *kwargs):
+def read_file(filename_with_ext: str, sheet_name=0):
     ext = filename_with_ext.partition('.')[-1]
     if ext == 'xlsx':
-        file = pd.read_excel(filename_with_ext, sheet_name=sheet_name, *kwargs)
+        file = pd.read_excel(filename_with_ext, sheet_name=sheet_name)
         return file
     elif ext == 'csv':
-        file = pd.read_csv(filename_with_ext, *kwargs)
+        file = pd.read_csv(filename_with_ext)
         return file
     elif ext == 'sas7bdat':
-        file = pd.read_sas(filename_with_ext, *kwargs)
+        file = pd.read_sas(filename_with_ext)
         return file
     else:
         print('Cannot read file: Convert to .xlsx, .csv or .sas7bdat')
@@ -194,7 +200,7 @@ def get_table_download_link(df, name):
     csv = df.to_csv(index=False)
     b64 = base64.b64encode(csv.encode()).decode()  # some strings <-> bytes conversions necessary here
     # href = f'<a href="data:file/csv;base64,{b64}">Download csv file</a>'
-    href = f'<a href="data:file/csv;base64,{b64}" download="table.csv" style="font-size: 10px">Download {name}</a>'
+    href = f'<a href="data:file/csv;base64,{b64}" download="{name}.csv" style="font-size: 10px">Download {name}</a>'
     return href
 
 def word_viewer(data, words, content_col, cust_col):
@@ -340,8 +346,96 @@ def get_topwords(data, content_col, columns):
             st.dataframe(topw)
         except:
             pass
-        
 
+def matrix(df, t, score_col):
+    ave_score = df[score_col].mean()
+    ave_count = df[t].sum().mean()
+    summ = pd.DataFrame({'Occurence':ave_count, 'NPS Score':ave_score}, index =['Overall']) 
+    for i in t:
+        nps = df[df[i]==1][score_col].mean()
+        count = df[df[i]==1][i].sum()
+        summ.loc[i] = [count, nps]
+    scatter = alt.Chart(summ.reset_index()[1:]).mark_circle(size=60).encode(x='Occurence',
+                                                                         y='NPS Score',
+                                                                         color=alt.Color('index', legend=alt.Legend(title="Topics")),
+                                                                         tooltip=['index', 'Occurence', 'NPS Score'],
+                                                                         text=alt.Text('index:N')).interactive()
+    vline = alt.Chart(summ.head(1)).mark_rule(color='black',
+                                              strokeWidth=1,
+                                              strokeDash=[3,5]).encode(x='Occurence:Q')
+    hline = alt.Chart(summ.head(1)).mark_rule(color='black',
+                                              strokeWidth=1,
+                                              strokeDash=[3,5]).encode(y='NPS Score:Q')
+    vtext = alt.Chart(pd.DataFrame({'Occurence':[summ.iloc[0]['Occurence']], 'NPS Score':[0.5]})).mark_text(text='Average Occurence',
+                                                                                                            baseline='middle',
+                                                                                                            align='left',
+                                                                                                            dx=5).encode(x='Occurence:Q',
+                                                                                                                         y='NPS Score:Q').interactive()
+    htext = alt.Chart(pd.DataFrame({'Occurence':[0.5], 'NPS Score':[summ.iloc[0]['NPS Score']]})).mark_text(text='Average NPS Score',
+                                                                                                            baseline='middle',
+                                                                                                            align='left',
+                                                                                                            dy=40).encode(x='Occurence:Q',
+                                                                                                                          y='NPS Score:Q').interactive()
+    #Matrix Summary
+    xmean = summ.iloc[0]['Occurence']
+    ymean = summ.iloc[0]['NPS Score']
+    topic_summ = summ[1:]
+    q1 = topic_summ[(topic_summ['Occurence']>=xmean)&(topic_summ['NPS Score']>=ymean)].index
+    q2 = topic_summ[(topic_summ['Occurence']<xmean)&(topic_summ['NPS Score']>ymean)].index
+    q3 = topic_summ[(topic_summ['Occurence']<xmean)&(topic_summ['NPS Score']<ymean)].index
+    q4 = topic_summ[(topic_summ['Occurence']>xmean)&(topic_summ['NPS Score']<ymean)].index
+    layout = go.Layout(margin=go.layout.Margin(l=0, r=0, b=0, t=0))
+    fig2 = go.Figure(data=[go.Table(header=dict(values=['Q1/Promoters Concerns', 'Q2/Least Concern of Promoters', 'Q3/Least Urgent Concern', 'Q4/Urgent Concerns'],
+											fill_color='firebrick',
+											font=dict(color='white'),
+											line_color='darkslategray'),
+								cells=dict(values=[q1, q2, q3, q4],
+											fill=dict(color='white'),
+											line_color='darkslategray'))], layout=layout)
+    fig1 = (scatter + vline + hline)
+    st.markdown("### Occurence Score Matrix")
+    st.markdown("Topics plotted along two dimensions, NPS Score and number of mentions.")
+    st.markdown(f"Average Topic Occurences (vertical dashed line): {int(summ.iloc[0]['Occurence'])}")
+    st.markdown(f"Average NPS (horizontal dashed line): {summ.iloc[0]['NPS Score']:.2f}")
+    col1, col2 = st.beta_columns(2)
+    with col1:
+        st.altair_chart(fig1, use_container_width=True)
+    with col2:
+        st.plotly_chart(fig2, use_container_width=True)
+
+def heatmap_numeric_w_dependent_variable(df, dependent_variable):
+    '''
+    Takes df, a dependant variable as str
+    Returns a heatmap of all independent variables' correlations with dependent variable 
+    '''
+    def interpret_corr(i):
+        if i==-1:
+            return "Perfect Negative / Inverse"
+        elif i <=-0.70:
+            return "Strong Negative / Inverse"
+        elif i <=-0.50:
+            return "Moderate Negative / Inverse"
+        elif i==0:
+            return "No relationship"
+        elif i<=0.3:
+            return "Weak Positive / Direct"
+        elif i<=0.5:
+            return "Moderate Positive / Direct"
+        elif i<=0.7:
+            return "Strong Positive / Direct"
+        elif i==1:
+            return "Perfect Positive / Direct"
+        else:
+            pass 
+    a = df.corr()[[dependent_variable]].sort_values(by=dependent_variable)
+    a.index = [i.split('Satisfaction_')[-1] for i in a.index]
+    a['interpret'] = a['pred_num'].map(lambda x: f"{round(x, 4)} ({interpret_corr(x)})")
+    a = a.reset_index().rename(columns={'index':'Attribute'})
+    a['Attribute'] = a['Attribute'].str.replace("_", " ", regex=True)
+    fig = alt.Chart(a).mark_rect().encode(y='Attribute:O', color='pred_num:Q')
+    text = alt.Chart(a).mark_text().encode(y='Attribute:O', text='interpret:O')
+    st.altair_chart((fig + text).properties(title='Correlation Score', width=400))
+        
 def load_sentiment_page(df):
     st.header("🌡️ Sentiment")
     st.markdown("* This feature allows you to extract the sentiment of customers in the selected text column.")
@@ -370,14 +464,36 @@ def load_sentiment_page(df):
         segdf = out[out[segment_col]==segment_val]
     else:
         segdf = out.copy()  
+    icon1, text1, icon2, text2 = st.beta_columns([1,10,1,10])  
+    with icon1:  
+    	img1 = Image.open(r'.\resources\respondents.png')
+    	st.image(img1, use_container_width=True)
+    with text1:
+        st.markdown(f"### Respondents:  {segdf[cust_col].nunique():,}")
+    with icon2:
+    	img2 = Image.open(r'.\resources\comments.png')
+    	st.image(img2, use_container_width=True)
+    with text2:
+        st.markdown(f"### Response:  {df.shape[0]:,}") #{segdf['index'].nunique():,}
 
-    st.info(f"There are {segdf[cust_col].nunique():,} respondents and {segdf['index'].nunique():,} rows")
     #Sentiment
+    segdf['pred'] = np.where(segdf[content_col].isna(), np.nan, segdf['pred'])
     sent_tally(segdf, cust_col)
+		
+    #Related Words
+    st.subheader("Related Words to Sentiment")
+    st.markdown("This section shows the words related to the sentiments (in order) and their corresponding number of occurences")
+    ngram_list = relatedwords1(segdf)
+    with st.beta_expander("- See Ngram breakdown"):
+    	relatedwords(segdf)
+    
+    
     channels, topics, products = read_keywords()
     ch_df = get_channels(segdf, channels)
     prod_df = get_products(ch_df, products)
     top_df = get_topics(prod_df, topics)
+    
+    st.subheader("Mentions")
     col1, col2 = st.beta_columns(2)
     #Channels
     with col1:
@@ -391,29 +507,36 @@ def load_sentiment_page(df):
            get_topwords(prod_df, content_col, products)
 
     #Topics
-    plot_topics(top_df, topics, cust_col)
+    topic_list = [j for j in topics.keys()] + ['Others', 'No Feedback']
+    remove_words = st.multiselect("Search words to remove: ", options=(topic_list))
+    if len(remove_words)>0:
+        mask_topic = [i for i in topic_list if i not in remove_words]
+        plot_topics(top_df, mask_topic, cust_col)
+    else:
+    	plot_topics(top_df, topic_list, cust_col)
     with st.beta_expander("- Browse topwords"):
         get_topwords(top_df, content_col, topics)
 
     #Browse
-    with st.beta_expander("- Browse responses"):
+    with st.beta_expander("- Browse responses per category"):
         col1, col2 = st.beta_columns(2)
         ref = {"Channel":channels, "Product":products, "Topics":topics}
         with col1:
             cat = st.selectbox("Category:", tuple(ref.keys()))
         with col2:
-            cat_val = st.selectbox("Subcategory:", tuple([k.strip() for v in ref[cat] for k in v.split(',')]))
-        st.table(top_df[top_df[cat_val]==1][[cust_col, content_col, 'pred', cat_val]])
+            cat_val = st.selectbox("Subcategory:", tuple([k.strip() for v in ref[cat] for k in v.split(',')]+['Others']))
+        st.table(top_df[top_df[cat_val]==1][[cust_col, content_col, 'pred', cat_val]].drop_duplicates())
     
-    #Related Words
-    st.subheader("Related Words to Sentiment")
-    st.markdown("This section shows the words related to the sentiments (in order) and their corresponding number of occurences")
-    ngram_list = relatedwords1(segdf)
-    with st.beta_expander("- See Ngram breakdown"):
-    	relatedwords(segdf)
+    #Topic Grade Matrix
+    matrix(top_df, [i for i in topic_list if i not in ['No Feedback']], score_col) 
     
+    #Correlation of attribute columns to sentiment   
+    st.subheader("Correlation of attribute columns to sentiment")
+    attrib = top_df[[i for i in top_df.columns.tolist() if i.startswith('Satisfaction')] + ['pred']]
+    attrib['pred_num'] = attrib['pred'].map({'Positive':1, 'Neutral':0, 'Negative':-1})
+    heatmap_numeric_w_dependent_variable(attrib.drop(columns=['pred']).dropna(axis=1, how='all'), 'pred_num')
     #Download entire table
-    st.markdown(get_table_download_link(top_df, "results"), unsafe_allow_html=True)
+    st.markdown(get_table_download_link(top_df, "full results"), unsafe_allow_html=True)
     
     #Word Viewer
     st.subheader("Word Viewer")
