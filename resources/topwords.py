@@ -148,8 +148,8 @@ def load_topwords_page(data):
     
     #Column Selections
     columns = [col for col in data.columns]
-    content_col = st.sidebar.radio("Select Text Column", (columns))
-    filter_col = st.sidebar.radio("Select Category Column", (['None'] + columns))
+    content_col = st.sidebar.selectbox("Select Text Column", (columns))
+    filter_col = st.sidebar.selectbox("Select Category Column", (['None'] + columns))
     
     session_state = SessionState.get(checkboxed=False)
     if st.sidebar.button("Confirm") or session_state.checkboxed:
