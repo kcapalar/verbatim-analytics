@@ -441,11 +441,11 @@ def load_sentiment_page(df):
     st.markdown("* This feature allows you to extract the sentiment of customers in the selected text column.")
     columns = [col for col in df.columns]
     
-    content_col = st.sidebar.radio("Select Text Column", (columns))
-    cust_col = st.sidebar.radio("Select Customer ID Column", (columns), index=1)
-    segment_col = st.sidebar.radio("Select Segment/category Column", (columns), index=2)
+    content_col = st.sidebar.selectbox("Select Text Column", (columns))
+    cust_col = st.sidebar.selectbox("Select Customer ID Column", (columns), index=1)
+    segment_col = st.sidebar.selectbox("Select Segment/category Column", (columns), index=2)
     segment_val = st.selectbox("Which segment/category would you like to view?", tuple(['View All'] + df[segment_col].dropna().unique().tolist()))
-    score_col = st.sidebar.radio("Select Score Column", (columns), index=3)
+    score_col = st.sidebar.selectbox("Select Score Column", (columns), index=3)
 
     session_state = SessionState.get(checkboxed=False)
     if st.sidebar.button("Confirm") or session_state.checkboxed:
