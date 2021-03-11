@@ -17,6 +17,9 @@ from PIL import Image
 import plotly.graph_objects as go
 import seaborn as sns
 from matplotlib import pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 #Settings
 alt.renderers.set_embed_options(padding={"left": 0, "right": 0, "bottom": 0, "top": 0})
 
@@ -27,39 +30,62 @@ def read_file(filename_with_ext: str, sheet_name=0):
         file = pd.read_excel(filename_with_ext, sheet_name=sheet_name)
         return file
     elif ext == 'csv':
-        file = pd.read_csv(filename_with_ext)
+        file = pd.read_csv(filename_with_ext, low_memory=False)
         return file
     elif ext == 'sas7bdat':
-        file = pd.read_sas(filename_with_ext)
+        file = pd.read_sas(filename_with_ext, format='sas7bdat', encoding='ISO-8859-1')
         return file
     else:
         print('Cannot read file: Convert to .xlsx, .csv or .sas7bdat')
 
 @st.cache(suppress_st_warning=True, persist=True, show_spinner=False, allow_output_mutation=True)
-def preprocess(df, content_col, cust_col):
+def preprocess(df, content_col):
+    df = df[df['VALID_INVALID'].str.upper()=='VALID']
     df = sent_clean.init_clean(df, col=content_col)
     #Converts to Sentence and fill with 'blank' those real blank cells
     df['sentence'] = df['init_cleaned'].map({'..':'blank', '...':'blank'}).fillna(df[content_col]).str.split('.')
   	#replace comments with elipsis or .. with BLANK
     df['sentence'] = df['sentence'].fillna('blank')
     new_df = df.explode('sentence').dropna(subset=['sentence']).query("sentence!=''").reset_index()
-	
-	#Shows tally
-    st.markdown(f"No. of Rows: {new_df['index'].nunique():,}")
-    st.markdown(f"No. of Customers: {new_df[cust_col].nunique():,}")
-    st.markdown(f"Rows w/o comments: {(new_df['sentence']=='blank').sum():,}")
     sent_df = new_df[['sentence', 'index']]
 
 	#Cleans text
     cleaned_df = sent_clean.final_clean(sent_df, col='sentence')
     return cleaned_df, new_df
 
+def nn_model(filtered):
+    sent_test = filtered
+
+    #Preprocessing Data
+    max_features = 50000
+    tokenizer = Tokenizer(num_words=max_features)
+    tokenizer.fit_on_texts(list(sent_test))
+    list_tokenized_test = tokenizer.texts_to_sequences(sent_test)
+
+    maxlen = 100
+    X_te = pad_sequences(list_tokenized_test, maxlen=maxlen)
+    #Predicting using saved model
+    lstm = tf.keras.models.load_model(r"lstm.h5")
+    cnn = tf.keras.models.load_model(r"cnn_1.h5")
+    cnn_gru = tf.keras.models.load_model(r"cnn_gru_1.h5")
+    bi_gru = tf.keras.models.load_model(r"bi_gru_1.h5")
+
+
+    #Combining predictions from four neural networks
+    proba = [
+        lstm.predict([X_te], batch_size=1024, verbose=1),
+        cnn.predict([X_te], batch_size=1024, verbose=1),
+        cnn_gru.predict([X_te], batch_size=1024, verbose=1),
+        bi_gru.predict([X_te], batch_size=1024, verbose=1)
+            ]
+
+    results = pd.DataFrame(np.mean(proba, axis=0), index=sent_test.index).apply(np.argmax, axis=1).map({0:'Negative', 1:'Neutral', 2:'Positive'})
+    return results
+
 def run_model(cleaned_df):
-	model = pickle.load(open(r'.\resources\model12.pkl','rb'))
-	filtered = cleaned_df[['cleaned']].query("(cleaned!='')&(cleaned!='blank')")['cleaned']
+    	filtered = cleaned_df[['cleaned']].query("(cleaned!='')&(cleaned!='blank')")['cleaned']
 	df = cleaned_df[['sentence', 'cleaned','index']]\
-    	.merge(pd.DataFrame(model.predict(filtered),
-    	 index=filtered.index)\
+    	.merge(nn_model(filtered).reset_index()[[0]]\
     	.rename(columns={0:'pred'}),
     			right_index=True,
     			left_index=True,
@@ -68,33 +94,60 @@ def run_model(cleaned_df):
 
 def sent_tally(out, cust_col):
 	#total sentiment count
-	src = pd.DataFrame(out['pred'].value_counts()).reset_index().rename(columns={'pred':'count', 'index':'sentiment'})
-	row_sent = alt.Chart(src).mark_bar().encode(x=alt.X('sentiment', type='nominal', sort=None, axis=alt.Axis(labelAngle=360, title="")),
-                                            	y=alt.Y('count', type='quantitative', axis=alt.Axis(title="Count")),color=alt.Color('sentiment:N',scale=alt.Scale(domain=['Negative','Neutral', 'Positive'],range=['firebrick','gray', 'darkgreen'])),tooltip=['sentiment:N', 'count:Q'])
+    src = pd.DataFrame(out['pred'].value_counts()).reset_index().rename(columns={'pred':'count', 'index':'sentiment'})
+    row_sent = alt.Chart(src).mark_bar().encode(x=alt.X('sentiment',
+                                                     type='nominal',
+                                                     sort=None,
+                                                     axis=alt.Axis(labelAngle=360,
+                                                                   title="")),
+                                            	y=alt.Y('count',
+                                                     type='quantitative',
+                                                     axis=alt.Axis(title="Count")),
+                                             color=alt.Color('sentiment:N',
+                                                             scale=alt.Scale(domain=['Negative','Neutral', 'Positive'],
+                                                                            range=['firebrick','gray', 'darkgreen'])),
+                                             tooltip=['sentiment:N', 'count:Q'])
 	#venn diagram of sentiment - customer level
-	venn = pd.DataFrame(out.fillna('None').groupby([cust_col,'pred'])['pred'].nunique()).unstack('pred').reset_index().fillna(0)
-	venn.columns = [venn.columns.values[0][0],venn.columns.values[1][1],venn.columns.values[2][1],venn.columns.values[3][1],venn.columns.values[4][1]]
-	venn['sum'] = venn[['Negative', 'Neutral', 'Positive']].sum(axis=1)
-	venn['sentiment'] = np.where((venn['sum']==1)&(venn['Negative']==1),'Negative', 'None')
-	venn['sentiment'] = np.where((venn['sum']==1)&(venn['Positive']==1),'Positive', venn['sentiment'])
-	venn['sentiment'] = np.where((venn['sum']==1)&(venn['Neutral']==1),'Neutral', venn['sentiment'])
-	venn['sentiment'] = np.where((venn['sum']>1), 'Mixed', venn['sentiment'])
-	venn1 = pd.DataFrame(venn['sentiment'].value_counts()).reset_index().rename(columns={'sentiment':'count', 'index':'sentiment'}).set_index('sentiment').reindex(['Negative','Mixed','Positive','Neutral','None']).reset_index().fillna(0)
-	venn1['Percent of Total'] = venn1['count'].divide(venn1['count'].sum())
-	cust_sent = alt.Chart(venn1).mark_bar().encode(x=alt.X('sentiment', type='nominal', sort=None, axis=alt.Axis(labelAngle=360, title="")),
-                                                y=alt.Y('Percent of Total', type='quantitative', axis=alt.Axis(format='%')),tooltip=['sentiment:N', 'Percent of Total:Q', 'count:Q'])
-	fig = cust_sent.properties(height=300, width=300, title='Sentiment by Customer') | row_sent.properties(height=300, width=300, title='All Sentiment')
-	st.markdown(get_table_download_link(venn1, "Sentiment by Customer table"), unsafe_allow_html=True)
-	st.markdown(get_table_download_link(src, "All Sentiment table"), unsafe_allow_html=True)
-	net_sent_score = (int(src.query("sentiment=='Positive'")['count']) - int(src.query("sentiment=='Negative'")['count'])) / int(src.query("sentiment!='Neutral'")['count'].sum())
-	st.markdown(f"### Net Sentiment Score: {(net_sent_score*100):,.2f}%")
-	return st.altair_chart(fig)
+    venn = pd.DataFrame(out.fillna('None').groupby([cust_col,'pred'])['pred'].nunique()).unstack('pred').reset_index().fillna(0)
+    venn.columns = [venn.columns.values[0][0],venn.columns.values[1][1],venn.columns.values[2][1],venn.columns.values[3][1],venn.columns.values[4][1]]
+    venn['sum'] = venn[['Negative', 'Neutral', 'Positive']].sum(axis=1)
+    venn['sentiment'] = np.where((venn['sum']==1)&(venn['Negative']==1),'Negative', 'No Comment')
+    venn['sentiment'] = np.where((venn['sum']==1)&(venn['Positive']==1),'Positive', venn['sentiment'])
+    venn['sentiment'] = np.where((venn['sum']==1)&(venn['Neutral']==1),'Neutral', venn['sentiment'])
+    venn['sentiment'] = np.where((venn['sum']>1), 'Mixed', venn['sentiment'])
+    venn1 = pd.DataFrame(venn['sentiment'].value_counts()).reset_index().rename(columns={'sentiment':'count', 'index':'sentiment'}).set_index('sentiment').reindex(['Negative','Mixed','Positive','Neutral','No Comment']).reset_index().fillna(0)
+    venn1['Percent of Total'] = venn1['count'].divide(venn1['count'].sum())
+    cust_sent = alt.Chart(venn1).mark_bar().encode(x=alt.X('sentiment',
+                                                        type='nominal',
+                                                        sort=None,
+                                                        axis=alt.Axis(labelAngle=360,
+                                                                      title="")),
+                                                y=alt.Y('Percent of Total',
+                                                        type='quantitative',
+                                                        axis=alt.Axis(format='%')),
+                                                color=alt.Color('sentiment:N',
+                                                                scale=alt.Scale(domain=['Negative','Neutral', 'Positive'],
+                                                                                range=['firebrick','gray', 'darkgreen'])),
+                                                tooltip=['sentiment:N', 'Percent of Total:Q', 'count:Q'])
+    fig = cust_sent.properties(height=300, width=300, title='Sentiment by Customer') | row_sent.properties(height=300, width=300, title='All Sentiment')
+    net_sent_score = (int(src.query("sentiment=='Positive'")['count']) - int(src.query("sentiment=='Negative'")['count'])) / int(src.query("sentiment!='Neutral'")['count'].sum())
+    st.markdown(f"### Net Sentiment Score: {(net_sent_score*100):,.2f}%")
+    st.markdown(" ")
+    sent1, sent2 = st.beta_columns(2)
+    with sent1:
+        fig = cust_sent.properties(height=300, width=300, title='Sentiment by Customer')
+        st.altair_chart(fig, use_container_width=True)
+        st.markdown(get_table_download_link(venn1, "Sentiment by Customer table"), unsafe_allow_html=True)
+    with sent2:
+        fig = row_sent.properties(height=300, width=300, title='All Sentiment')
+        st.altair_chart(fig, use_container_width=True)
+        st.markdown(get_table_download_link(src, "All Sentiment table"), unsafe_allow_html=True)
 
 def relatedwords(out):
-	out['category_id'] = out['pred'].fillna('Blank').factorize()[0]
-	category_id_df = out[['pred', 'category_id']].fillna('Blank').drop_duplicates().sort_values('category_id')
+	out['category_id'] = out['pred'].fillna('blank').factorize()[0]
+	category_id_df = out[['pred', 'category_id']].fillna('blank').drop_duplicates().sort_values('category_id')
 	category_to_id = dict(category_id_df.values)
-
+	out['cleaned'] = out['cleaned'].str.replace('blank', '',regex=True, case=False)
 	tfidf = TfidfVectorizer(sublinear_tf=True,
 	                        min_df=5,
 	                        norm='l2',
@@ -105,7 +158,7 @@ def relatedwords(out):
 	corr_dict1 = {}
 
 	for Sentiment, category_id in sorted(category_to_id.items()):
-	    if Sentiment != 'Blank':
+	    if Sentiment != 'blank':
 	        features_chi2 = chi2(features, labels == category_id)
 	        indices = np.argsort(features_chi2[0])[::-1]
 	        feature_names = np.array(tfidf.get_feature_names())[indices]
@@ -136,7 +189,8 @@ def relatedwords(out):
 		li = []
 		for ngram,name in zip(ngrams, ['Unigram', 'Bigram', 'Trigram']):
 			corr = pd.DataFrame({k:v for k,v in corr_dict1.items() if f'{sent}_{ngram}' in k})
-			df_ngram = corr[corr[f"{sent}_{ngram}_pval"]<0.05].head(30).merge(vector, left_on=f'{sent}_{ngram}' , right_on='word', how='left')
+			df_ngram = corr.head(30).merge(vector, left_on=f'{sent}_{ngram}' , right_on='word', how='left')
+			# df_ngram = corr[corr[f"{sent}_{ngram}_pval"]<0.05].head(30).merge(vector, left_on=f'{sent}_{ngram}' , right_on='word', how='left')
 			bars = alt.Chart(df_ngram).mark_bar().encode(x="count:Q",y=alt.Y('word', type='nominal', sort=None, axis=alt.Axis(title="")),
 														 tooltip=['word:N', 'count:Q'],
 														  color=alt.condition(alt.datum[f'{sent}_{ngram}_pval']<0.001, alt.value('firebrick'), alt.value('grey')))
@@ -147,10 +201,10 @@ def relatedwords(out):
 		st.altair_chart(figs)
 
 def relatedwords1(out):
-	out['category_id'] = out['pred'].fillna('Blank').factorize()[0]
-	category_id_df = out[['pred', 'category_id']].fillna('Blank').drop_duplicates().sort_values('category_id')
+	out['category_id'] = out['pred'].fillna('blank').factorize()[0]
+	category_id_df = out[['pred', 'category_id']].fillna('blank').drop_duplicates().sort_values('category_id')
 	category_to_id = dict(category_id_df.values)
-
+	out['cleaned'] = out['cleaned'].str.replace('blank', '',regex=True, case=False)
 	tfidf = TfidfVectorizer(sublinear_tf=True,
 	                        min_df=5,
 	                        norm='l2',
@@ -161,7 +215,7 @@ def relatedwords1(out):
 	corr_dict = {}
 	ngram_list = [i for i in tfidf.get_feature_names()]
 	for Sentiment, category_id in sorted(category_to_id.items()):
-	    if Sentiment != 'Blank':
+	    if Sentiment != 'blank':
 	        features_chi2 = chi2(features, labels == category_id)
 	        indices = np.argsort(features_chi2[0])[::-1]
 	        feature_names = np.array(tfidf.get_feature_names())[indices]
@@ -181,7 +235,8 @@ def relatedwords1(out):
 	li = []
 	for sent in sents:
 		corr = pd.DataFrame({k:v for k,v in corr_dict.items() if sent in k})
-		df_ngram = corr[corr[f"{sent}_pval"]<0.05].head(30).merge(vector, left_on=f'{sent}_sent' , right_on='word', how='left')
+		df_ngram = corr.head(30).merge(vector, left_on=f'{sent}_sent' , right_on='word', how='left')
+		# df_ngram = corr[corr[f"{sent}_pval"]<0.05].head(30).merge(vector, left_on=f'{sent}_sent' , right_on='word', how='left')
 		bars = alt.Chart(df_ngram).mark_bar().encode(x="count:Q",y=alt.Y('word', type='nominal', sort=None, axis=alt.Axis(title="")),
 													 tooltip=['word:N', 'count:Q'],
 													  color=alt.condition(alt.datum[f'{sent}_pval']<0.001, alt.value('firebrick'), alt.value('grey')))
@@ -189,7 +244,9 @@ def relatedwords1(out):
 		fig = (bars + text).properties(height=500, width=200, title=f"{sent}")
 		li.append(fig)
 	figs = li[0]|li[1]|li[2]
-	st.altair_chart(figs)
+	# col1, col2 = st.beta_columns([1,0])
+	# with col1:
+	st.altair_chart(figs, use_container_width=True)
 	return ngram_list
 
 def get_table_download_link(df, name):
@@ -247,7 +304,7 @@ def plot_channels(df,channels,cust_col):
 	    detail='Channel:N',
 	    text=alt.Text('sum(count):Q', format=',.0f')
 	)
-	fig = (bars + text).properties(title='By Channel')
+	fig = (bars + text).properties(title='By Channel', height=200)
 	return st.altair_chart(fig)
 
 @st.cache(suppress_st_warning=True, persist=True, show_spinner=False, allow_output_mutation=True)
@@ -267,13 +324,11 @@ def get_topics(df, topics):
 		df[i] = df['topics'].map(lambda x: 1 if str(i) in x else 0)
 	return df
 
-
-def plot_topics(df, topics, cust_col):
-    topic_list = [j for j in topics.keys()] + ['Others', 'No Feedback']
+def plot_topics(df, topic_list, cust_col):
     a = df.groupby([cust_col, 'pred'])[topic_list].sum().clip(0,1).groupby('pred')[topic_list].sum().reindex(['Neutral', 'Positive', 'Negative'])
     b = a.unstack().reset_index().rename(columns={'level_0':'Topic', 0:'count'})
     c = (a.divide(a.sum())*100).unstack().reset_index().rename(columns={'level_0':'Topic', 0:'percent'})
-    source = b.merge(c, on=['Topic', 'pred']).query("count>1")
+    source = b.merge(c, on=['Topic', 'pred']).query("count>0")
     st.markdown(get_table_download_link(source, "topics table"), unsafe_allow_html=True)
     bars = alt.Chart(source).mark_bar().encode(
 	    x=alt.X('count:Q', stack='zero', axis=alt.Axis(title="Count")),
@@ -288,7 +343,7 @@ def plot_topics(df, topics, cust_col):
 	    text=alt.Text('sum(count):Q', format=',.0f')
 	)
     fig = (bars + text).properties(title='By Topic', height=300, width=600)
-    return st.altair_chart(fig)
+    return st.altair_chart(fig, use_container_width=True)
 
 @st.cache(suppress_st_warning=True, persist=True, show_spinner=False, allow_output_mutation=True)
 def get_products(df, products):
@@ -326,7 +381,7 @@ def plot_products(df, products, cust_col):
 	    detail='Product:N',
 	    text=alt.Text('sum(count):Q', format=',.0f')
 	)
-    fig = (bars + text).properties(title='By Product')
+    fig = (bars + text).properties(title='By Product', height=200)
     return st.altair_chart(fig)
   
 def read_keywords():
@@ -340,8 +395,8 @@ def get_topwords(data, content_col, columns):
     for items in columns.keys():
         try:
             cond1 = data[items]==1
-            cond2 = ~data[content_col].str.lower().str.contains('|'.join([i for i in [items.lower()[:-1],items.lower()+'ing',items.lower()+'s',items.lower()]]))
-            topw = topwords_sent.main(data[cond1&cond2], content_col)
+            cond2 = data[content_col].str.lower().str.contains('|'.join([i for i in [items.lower()[:-1],items.lower()+'ing',items.lower()+'s',items.lower()]]))
+            topw = topwords_sent.main(data[cond1&(cond2==False)], content_col)
             st.markdown(items)
             st.dataframe(topw)
         except:
@@ -435,7 +490,7 @@ def heatmap_numeric_w_dependent_variable(df, dependent_variable):
     fig = alt.Chart(a).mark_rect().encode(y='Attribute:O', color='pred_num:Q')
     text = alt.Chart(a).mark_text().encode(y='Attribute:O', text='interpret:O')
     st.altair_chart((fig + text).properties(title='Correlation Score', width=400))
-        
+
 def load_sentiment_page(df):
     st.header("🌡️ Sentiment")
     st.markdown("* This feature allows you to extract the sentiment of customers in the selected text column.")
@@ -455,7 +510,7 @@ def load_sentiment_page(df):
         st.stop() 
     
     # st.markdown("Preprocessing DataFrame")
-    cleaned_df, new_df = preprocess(df, content_col, cust_col)
+    cleaned_df, new_df = preprocess(df, content_col)
     pred_df = run_model(cleaned_df)
     out = pred_df.drop(columns=['sentence']).merge(new_df, how='right', on='index', copy=False).drop_duplicates(subset=[cust_col,'sentence'])
 
@@ -475,11 +530,11 @@ def load_sentiment_page(df):
     	st.image(img2, use_container_width=True)
     with text2:
         st.markdown(f"### Response:  {df.shape[0]:,}") #{segdf['index'].nunique():,}
-
+    
     #Sentiment
     segdf['pred'] = np.where(segdf[content_col].isna(), np.nan, segdf['pred'])
     sent_tally(segdf, cust_col)
-		
+    
     #Related Words
     st.subheader("Related Words to Sentiment")
     st.markdown("This section shows the words related to the sentiments (in order) and their corresponding number of occurences")
