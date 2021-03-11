@@ -39,7 +39,7 @@ def load_homepage():
 #MAIN -----------------------------------------------------------------------------------------------
 def navigate_pages():
     try:
-        tabs = ["Top Keywords", "Topics Explorer", "Customer Sentiments", "FAQs"]
+        tabs = ["Top Keywords", "Customer Sentiments", "FAQs"]
         page = st.sidebar.radio("Features", tabs)
         if page == tabs[0]:
             data = load_homepage()
@@ -49,17 +49,11 @@ def navigate_pages():
             
         elif page == tabs[1]:
             data = load_homepage()
-            # sentiment.load_sentiment_page(data)
-            st.markdown("# 🚧 Page under Construction")
-            #Insert function for topics here
-            
-        elif page == tabs[2]:
-            data = load_homepage()
             sentiment.load_sentiment_page(data)
             #insert function for sentiments here
             # st.markdown("# 🚧 Page under Construction")
             
-        elif page == tabs[3]:
+        elif page == tabs[2]:
             FAQs.write_faq()
     except:
         st.warning("Confirm your selection using the by clicking the button to continue.")
