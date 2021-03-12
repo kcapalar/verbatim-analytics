@@ -82,14 +82,10 @@ def nn_model(filtered):
     results = pd.DataFrame(np.mean(proba, axis=0), index=sent_test.index).apply(np.argmax, axis=1).map({0:'Negative', 1:'Neutral', 2:'Positive'})
     return results
 
-def new_func(nn_model):
-    def run_model(cleaned_df):
-        filtered = cleaned_df[['cleaned']].query("(cleaned!='')&(cleaned!='blank')")['cleaned']
-        df = cleaned_df[['sentence', 'cleaned','index']].merge(nn_model(filtered).reset_index()[[0]].rename(columns={0:'pred'}),right_index=True,left_index=True,how='left')
-        return df
-    return run_model
-
-return run_model = new_func(nn_model)
+def run_model(cleaned_df):
+    filtered = cleaned_df[['cleaned']].query("(cleaned!='')&(cleaned!='blank')")['cleaned']
+    df = cleaned_df[['sentence', 'cleaned','index']].merge(nn_model(filtered).reset_index()[[0]].rename(columns={0:'pred'}),right_index=True,left_index=True,how='left')
+    return df
 
 def sent_tally(out, cust_col):
 	#total sentiment count
