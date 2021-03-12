@@ -490,111 +490,111 @@ def heatmap_numeric_w_dependent_variable(df, dependent_variable):
     fig = alt.Chart(a).mark_rect().encode(y='Attribute:O', color='pred_num:Q')
     text = alt.Chart(a).mark_text().encode(y='Attribute:O', text='interpret:O')
     st.altair_chart((fig + text).properties(title='Correlation Score', width=400))
+with st.echo():
+    def load_sentiment_page(df):
+        st.header("🌡️ Sentiment")
+        st.markdown("* This feature allows you to extract the sentiment of customers in the selected text column.")
+        columns = [col for col in df.columns]
+        
+        content_col = st.sidebar.selectbox("Select Text Column", (columns))
+        cust_col = st.sidebar.selectbox("Select Customer ID Column", (columns), index=1)
+        segment_col = st.sidebar.selectbox("Select Segment/category Column", (columns), index=2)
+        segment_val = st.selectbox("Which segment/category would you like to view?", tuple(['View All'] + df[segment_col].dropna().unique().tolist()))
+        score_col = st.sidebar.selectbox("Select Score Column", (columns), index=3)
 
-def load_sentiment_page(df):
-    st.header("🌡️ Sentiment")
-    st.markdown("* This feature allows you to extract the sentiment of customers in the selected text column.")
-    columns = [col for col in df.columns]
-    
-    content_col = st.sidebar.selectbox("Select Text Column", (columns))
-    cust_col = st.sidebar.selectbox("Select Customer ID Column", (columns), index=1)
-    segment_col = st.sidebar.selectbox("Select Segment/category Column", (columns), index=2)
-    segment_val = st.selectbox("Which segment/category would you like to view?", tuple(['View All'] + df[segment_col].dropna().unique().tolist()))
-    score_col = st.sidebar.selectbox("Select Score Column", (columns), index=3)
+        session_state = SessionState.get(checkboxed=False)
+        if st.sidebar.button("Confirm") or session_state.checkboxed:
+            session_state.checkboxed = True
+            pass
+        else:
+            st.stop() 
+        
+        # st.markdown("Preprocessing DataFrame")
+        cleaned_df, new_df = preprocess(df, content_col)
+        pred_df = run_model(cleaned_df)
+        out = pred_df.drop(columns=['sentence']).merge(new_df, how='right', on='index', copy=False).drop_duplicates(subset=[cust_col,'sentence'])
 
-    session_state = SessionState.get(checkboxed=False)
-    if st.sidebar.button("Confirm") or session_state.checkboxed:
-        session_state.checkboxed = True
-        pass
-    else:
-        st.stop() 
-    
-    # st.markdown("Preprocessing DataFrame")
-    cleaned_df, new_df = preprocess(df, content_col)
-    pred_df = run_model(cleaned_df)
-    out = pred_df.drop(columns=['sentence']).merge(new_df, how='right', on='index', copy=False).drop_duplicates(subset=[cust_col,'sentence'])
-
-    #Run Dashboard =====
-    if segment_val!='View All':
-        segdf = out[out[segment_col]==segment_val]
-    else:
-        segdf = out.copy()  
-    icon1, text1, icon2, text2 = st.beta_columns([1,10,1,10])  
-    with icon1:  
-    	img1 = Image.open(r'.\resources\respondents.png')
-    	st.image(img1, use_container_width=True)
-    with text1:
-        st.markdown(f"### Respondents:  {segdf[cust_col].nunique():,}")
-    with icon2:
-    	img2 = Image.open(r'.\resources\comments.png')
-    	st.image(img2, use_container_width=True)
-    with text2:
-        st.markdown(f"### Response:  {df.shape[0]:,}") #{segdf['index'].nunique():,}
-    
-    #Sentiment
-    segdf['pred'] = np.where(segdf[content_col].isna(), np.nan, segdf['pred'])
-    sent_tally(segdf, cust_col)
-    
-    #Related Words
-    st.subheader("Related Words to Sentiment")
-    st.markdown("This section shows the words related to the sentiments (in order) and their corresponding number of occurences")
-    ngram_list = relatedwords1(segdf)
-    with st.beta_expander("- See Ngram breakdown"):
-    	relatedwords(segdf)
-    
-    
-    channels, topics, products = read_keywords()
-    ch_df = get_channels(segdf, channels)
-    prod_df = get_products(ch_df, products)
-    top_df = get_topics(prod_df, topics)
-    
-    st.subheader("Mentions")
-    col1, col2 = st.beta_columns(2)
-    #Channels
-    with col1:
-        plot_channels(ch_df, channels, cust_col)
-        with st.beta_expander("- Browse topwords"):
-            get_topwords(ch_df, content_col, channels)
-    #Products
-    with col2:
-       plot_products(prod_df, products, cust_col)
-       with st.beta_expander("- Browse topwords"):
-           get_topwords(prod_df, content_col, products)
-
-    #Topics
-    topic_list = [j for j in topics.keys()] + ['Others', 'No Feedback']
-    remove_words = st.multiselect("Search words to remove: ", options=(topic_list))
-    if len(remove_words)>0:
-        mask_topic = [i for i in topic_list if i not in remove_words]
-        plot_topics(top_df, mask_topic, cust_col)
-    else:
-    	plot_topics(top_df, topic_list, cust_col)
-    with st.beta_expander("- Browse topwords"):
-        get_topwords(top_df, content_col, topics)
-
-    #Browse
-    with st.beta_expander("- Browse responses per category"):
+        #Run Dashboard =====
+        if segment_val!='View All':
+            segdf = out[out[segment_col]==segment_val]
+        else:
+            segdf = out.copy()  
+        icon1, text1, icon2, text2 = st.beta_columns([1,10,1,10])  
+        with icon1:  
+            img1 = Image.open(r'.\resources\respondents.png')
+            st.image(img1, use_container_width=True)
+        with text1:
+            st.markdown(f"### Respondents:  {segdf[cust_col].nunique():,}")
+        with icon2:
+            img2 = Image.open(r'.\resources\comments.png')
+            st.image(img2, use_container_width=True)
+        with text2:
+            st.markdown(f"### Response:  {df.shape[0]:,}") #{segdf['index'].nunique():,}
+        
+        #Sentiment
+        segdf['pred'] = np.where(segdf[content_col].isna(), np.nan, segdf['pred'])
+        sent_tally(segdf, cust_col)
+        
+        #Related Words
+        st.subheader("Related Words to Sentiment")
+        st.markdown("This section shows the words related to the sentiments (in order) and their corresponding number of occurences")
+        ngram_list = relatedwords1(segdf)
+        with st.beta_expander("- See Ngram breakdown"):
+            relatedwords(segdf)
+        
+        
+        channels, topics, products = read_keywords()
+        ch_df = get_channels(segdf, channels)
+        prod_df = get_products(ch_df, products)
+        top_df = get_topics(prod_df, topics)
+        
+        st.subheader("Mentions")
         col1, col2 = st.beta_columns(2)
-        ref = {"Channel":channels, "Product":products, "Topics":topics}
+        #Channels
         with col1:
-            cat = st.selectbox("Category:", tuple(ref.keys()))
+            plot_channels(ch_df, channels, cust_col)
+            with st.beta_expander("- Browse topwords"):
+                get_topwords(ch_df, content_col, channels)
+        #Products
         with col2:
-            cat_val = st.selectbox("Subcategory:", tuple([k.strip() for v in ref[cat] for k in v.split(',')]+['Others']))
-        st.table(top_df[top_df[cat_val]==1][[cust_col, content_col, 'pred', cat_val]].drop_duplicates())
-    
-    #Topic Grade Matrix
-    matrix(top_df, [i for i in topic_list if i not in ['No Feedback']], score_col) 
-    
-    #Correlation of attribute columns to sentiment   
-    st.subheader("Correlation of attribute columns to sentiment")
-    attrib = top_df[[i for i in top_df.columns.tolist() if i.startswith('Satisfaction')] + ['pred']]
-    attrib['pred_num'] = attrib['pred'].map({'Positive':1, 'Neutral':0, 'Negative':-1})
-    heatmap_numeric_w_dependent_variable(attrib.drop(columns=['pred']).dropna(axis=1, how='all'), 'pred_num')
-    #Download entire table
-    st.markdown(get_table_download_link(top_df, "full results"), unsafe_allow_html=True)
-    
-    #Word Viewer
-    st.subheader("Word Viewer")
-    words = st.text_input("Search content with the following words: ")
-    if len(words)>0:
-        word_viewer(top_df, str(words).lower(), content_col, cust_col)
+        plot_products(prod_df, products, cust_col)
+        with st.beta_expander("- Browse topwords"):
+            get_topwords(prod_df, content_col, products)
+
+        #Topics
+        topic_list = [j for j in topics.keys()] + ['Others', 'No Feedback']
+        remove_words = st.multiselect("Search words to remove: ", options=(topic_list))
+        if len(remove_words)>0:
+            mask_topic = [i for i in topic_list if i not in remove_words]
+            plot_topics(top_df, mask_topic, cust_col)
+        else:
+            plot_topics(top_df, topic_list, cust_col)
+        with st.beta_expander("- Browse topwords"):
+            get_topwords(top_df, content_col, topics)
+
+        #Browse
+        with st.beta_expander("- Browse responses per category"):
+            col1, col2 = st.beta_columns(2)
+            ref = {"Channel":channels, "Product":products, "Topics":topics}
+            with col1:
+                cat = st.selectbox("Category:", tuple(ref.keys()))
+            with col2:
+                cat_val = st.selectbox("Subcategory:", tuple([k.strip() for v in ref[cat] for k in v.split(',')]+['Others']))
+            st.table(top_df[top_df[cat_val]==1][[cust_col, content_col, 'pred', cat_val]].drop_duplicates())
+        
+        #Topic Grade Matrix
+        matrix(top_df, [i for i in topic_list if i not in ['No Feedback']], score_col) 
+        
+        #Correlation of attribute columns to sentiment   
+        st.subheader("Correlation of attribute columns to sentiment")
+        attrib = top_df[[i for i in top_df.columns.tolist() if i.startswith('Satisfaction')] + ['pred']]
+        attrib['pred_num'] = attrib['pred'].map({'Positive':1, 'Neutral':0, 'Negative':-1})
+        heatmap_numeric_w_dependent_variable(attrib.drop(columns=['pred']).dropna(axis=1, how='all'), 'pred_num')
+        #Download entire table
+        st.markdown(get_table_download_link(top_df, "full results"), unsafe_allow_html=True)
+        
+        #Word Viewer
+        st.subheader("Word Viewer")
+        words = st.text_input("Search content with the following words: ")
+        if len(words)>0:
+            word_viewer(top_df, str(words).lower(), content_col, cust_col)
