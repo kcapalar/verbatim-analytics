@@ -5,8 +5,8 @@ import plotly.express as px
 import nltk
 from sklearn.feature_extraction.text import CountVectorizer
 from nltk.stem import WordNetLemmatizer, SnowballStemmer
-nltk.download('stopwords')
-nltk.download('wordnet')
+#nltk.download('stopwords')
+#nltk.download('wordnet')
 from nltk.corpus import stopwords
 import string
 import re
