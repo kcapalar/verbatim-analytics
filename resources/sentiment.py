@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 import numpy as np
-import pickle
+#import pickle
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_selection import chi2
 from sklearn.feature_extraction.text import CountVectorizer
@@ -15,7 +15,7 @@ import SessionState
 import topwords_sent
 from PIL import Image
 import plotly.graph_objects as go
-import seaborn as sns
+#import seaborn as sns
 from matplotlib import pyplot as plt
 import tensorflow as tf
 from tensorflow.keras.preprocessing.text import Tokenizer
